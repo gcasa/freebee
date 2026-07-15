@@ -413,11 +413,11 @@ int main(int argc, char *argv[])
     if (scalex != 1.0 || scaley != 1.0)
 	    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, fbc_get_string("display", "scale_quality"));
 	SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, 0);
-	SDL_RenderSetScale(renderer, scalex, scaley);
 	if (!renderer){
 		fprintf(stderr, "Error creating SDL renderer: %s.\n", SDL_GetError());
 		exit(EXIT_FAILURE);
 	}
+	SDL_RenderSetScale(renderer, scalex, scaley);
 	SDL_Texture *fbTexture = SDL_CreateTexture(renderer,
                                SDL_PIXELFORMAT_RGB888,
                                SDL_TEXTUREACCESS_STREAMING,
@@ -464,6 +464,14 @@ int main(int argc, char *argv[])
 	uint32_t clock_cycles = 0, cycles_run;
 	bool exitEmu = false;
 	uint8_t last_leds = 255;
+
+	// SDL does not preserve the renderer backbuffer after SDL_RenderPresent().
+	// Seed the framebuffer texture before the first frame; subsequent frames
+	// only upload it again when the emulated VRAM changes.
+	refreshScreen(screen, renderer, fbTexture);
+	refreshStatusBar(renderer, lightbarTexture);
+	SDL_RenderPresent(renderer);
+	last_leds = state.leds;
 
 	/*bool lastirq_fdc = false;*/
 	for (;;) {
@@ -585,12 +593,15 @@ int main(int argc, char *argv[])
 		}
 		// Is it time to run the 60Hz periodic interrupt yet?
 		if (clock_cycles > CLOCKS_PER_60HZ) {
-			// Refresh the screen if VRAM has been changed
+			// Upload the framebuffer only if VRAM changed.  The renderer
+			// backbuffer must still be rebuilt in full before every present.
 			if (state.vram_updated){
 				refreshScreen(screen, renderer, fbTexture);
+			} else {
+				SDL_RenderCopy(renderer, fbTexture, NULL, NULL);
 			}
-			if (state.vram_updated || last_leds != state.leds){
-				refreshStatusBar(renderer, lightbarTexture);
+			refreshStatusBar(renderer, lightbarTexture);
+			if (last_leds != state.leds){
 				last_leds = state.leds;
 			}
 			state.vram_updated = false;
