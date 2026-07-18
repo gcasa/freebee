@@ -17,6 +17,9 @@
 
 #include "lightbar.c"
 #include "i8274.h"
+#ifdef __APPLE__
+#include "macos_ui.h"
+#endif
 
 extern int cpu_log_enabled;
 
@@ -47,11 +50,26 @@ static int load_fd()
 	}
 }
 
+static const char *hard_disk_path(int drive)
+{
+#ifdef __APPLE__
+	const char *preferred = macos_ui_disk_path(drive);
+	if (preferred != NULL)
+		return preferred;
+#endif
+	if (drive == 0) {
+		const char *bundled = getenv("FREEBEE_DEFAULT_HD");
+		if (bundled != NULL && bundled[0] != '\0')
+			return bundled;
+	}
+	return fbc_get_string("hard_disk", drive == 0 ? "disk1" : "disk2");
+}
+
 static int load_hd()
 {
 	int ret = 0;
-	const char *disk1 = fbc_get_string("hard_disk", "disk1");
-	const char *disk2 = fbc_get_string("hard_disk", "disk2");
+	const char *disk1 = hard_disk_path(0);
+	const char *disk2 = hard_disk_path(1);
 	int sectors_per_track = fbc_get_int("hard_disk", "sectors_per_track");
 	int heads = fbc_get_int("hard_disk", "heads");
 	// bytes per sector is fixed at 512, not configurable, all hard drives of the 3B1
@@ -360,6 +378,13 @@ int main(int argc, char *argv[])
 {
 	float scalex = fbc_get_double("display", "x_scale");
 	float scaley = fbc_get_double("display", "y_scale");
+#ifdef __APPLE__
+	double saved_scale = macos_ui_saved_scale();
+	if (saved_scale > 0.0) {
+		scalex = (float)saved_scale;
+		scaley = (float)saved_scale;
+	}
+#endif
 
 	if (scalex <= 0 || scalex > 45 || scaley <= 0 || scaley > 45) {
 		// 45 chosen as max because 45 * 720 < INT16_MAX
@@ -405,7 +430,8 @@ int main(int argc, char *argv[])
 	// Set up the video display
 	SDL_Window *window;
 	if ((window = SDL_CreateWindow("FreeBee 3B1 Emulator", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-									(int) ceilf(720*scalex), (int) ceilf(348*scaley), 0)) == NULL) {
+									(int) ceilf(720*scalex), (int) ceilf(348*scaley),
+									SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI)) == NULL) {
 		fprintf(stderr, "Error creating SDL window: %s.\n", SDL_GetError());
 		exit(EXIT_FAILURE);
 	}
@@ -417,7 +443,10 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Error creating SDL renderer: %s.\n", SDL_GetError());
 		exit(EXIT_FAILURE);
 	}
-	SDL_RenderSetScale(renderer, scalex, scaley);
+	if (SDL_RenderSetLogicalSize(renderer, 720, 348) < 0) {
+		fprintf(stderr, "Error setting SDL logical display size: %s.\n", SDL_GetError());
+		exit(EXIT_FAILURE);
+	}
 	SDL_Texture *fbTexture = SDL_CreateTexture(renderer,
                                SDL_PIXELFORMAT_RGB888,
                                SDL_TEXTUREACCESS_STREAMING,
@@ -442,6 +471,14 @@ int main(int argc, char *argv[])
 	);
 	SDL_Texture *lightbarTexture = SDL_CreateTextureFromSurface(renderer, surf);
 	SDL_FreeSurface(surf);
+	if (!lightbarTexture){
+		fprintf(stderr, "Error creating SDL status texture: %s.\n", SDL_GetError());
+		exit(EXIT_FAILURE);
+	}
+
+#ifdef __APPLE__
+	macos_ui_init(window);
+#endif
 
 	printf("Set %dx%d at %d bits-per-pixel mode\n\n", (int) ceilf(720*scalex), (int) ceilf(348*scaley), screen->format->BitsPerPixel);
 

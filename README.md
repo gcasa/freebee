@@ -73,6 +73,33 @@ If anyone can figure this out,
 
 # Running Freebee
 
+## macOS application wrapper
+
+After building `freebee`, create a Finder-launchable app bundle with:
+
+```sh
+scripts/create-macos-app.sh
+open FreeBee.app
+```
+
+The app embeds the current `freebee` executable and uses the directory where
+the script was run for `.freebee.toml` and ROMs. By default it also bundles
+`3b1-hd.zip` (or `hd.img` if the ZIP is absent) as a pristine hard-disk seed.
+On first launch, a writable copy is installed at
+`~/Library/Application Support/FreeBee/hd.img`; the signed copy inside the app
+is never modified. Use `--disk-image PATH` to choose another seed or
+`--no-disk-image` to omit it.
+
+Use `--data-dir PATH` to select a different data directory, `--output PATH` to
+place the app elsewhere, or `--help` to see all options. Re-run the script
+after rebuilding the executable.
+
+On macOS, the **Machine** menu selects boot and secondary disk images. Disk
+changes take effect the next time FreeBee starts, preventing an active UNIX
+root filesystem from being hot-swapped. The **View** menu controls window
+scale, fit-to-screen, and full-screen modes. These app preferences take
+precedence over the corresponding TOML defaults.
+
 ## Initial Setup
   - Download the 3B1 ROMs from Bitsavers: [link](http://bitsavers.org/pdf/att/3b1/firmware/3b1_roms.zip)
   - Unzip the ROMs ZIP file and put the ROMs in a directory called `roms`:
@@ -118,9 +145,13 @@ If anyone can figure this out,
 
 ## Scaling the display
 
-You can scale the display by setting scale factors in the `.freebee.toml` file.
-Scale values must be greater than zero and less than or equal to 45. This
-facility is useful on large displays.
+The display window is resizable and preserves the emulated screen's aspect
+ratio. On macOS, use the **View** menu for common scale factors, fit-to-screen,
+or full-screen display. The selected scale is saved for the next launch.
+
+The `x_scale` and `y_scale` values in `.freebee.toml` remain available as
+startup defaults on platforms without app preferences. Scale values must be
+greater than zero and less than or equal to 45.
 
 # Keyboard commands
 
