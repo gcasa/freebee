@@ -82,13 +82,25 @@ scripts/create-macos-app.sh
 open FreeBee.app
 ```
 
-The app embeds the current `freebee` executable and uses the directory where
-the script was run for `.freebee.toml` and ROMs. By default it also bundles
+The app embeds the current `freebee` executable, the two ROM files from
+`roms/`, and its SDL runtime library. It therefore does not require a source
+checkout, Homebrew, or a separate SDL installation on the destination Mac.
+The directory where the script was run remains the optional location for
+`.freebee.toml` and floppy images; if that directory is unavailable, the app
+falls back to its Application Support directory. By default it also bundles
 `3b1-hd.zip` (or `hd.img` if the ZIP is absent) as a pristine hard-disk seed.
 On first launch, a writable copy is installed at
 `~/Library/Application Support/FreeBee/hd.img`; the signed copy inside the app
 is never modified. Use `--disk-image PATH` to choose another seed or
 `--no-disk-image` to omit it.
+
+Use `--rom-dir PATH` to bundle ROMs from another directory or `--no-roms` to
+build a wrapper which still expects externally configured ROM files.
+
+The generated app is portable across Macs supported by the input executable
+and SDL library. The bundler reports the included CPU architectures and the
+minimum macOS version. A universal app requires a universal FreeBee executable
+and universal SDL library at build time.
 
 Use `--data-dir PATH` to select a different data directory, `--output PATH` to
 place the app elsewhere, or `--help` to see all options. Re-run the script

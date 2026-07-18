@@ -15,6 +15,9 @@ Options:
   --disk-image PATH  Default writable hard-disk seed (.img or .zip)
                      (default: project-root/3b1-hd.zip, then hd.img)
   --no-disk-image    Build without a bundled hard-disk seed
+  --rom-dir PATH     Directory containing 14c.bin and 15c.bin
+                     (default: project-root/roms)
+  --no-roms          Build without bundled ROM files
   --output PATH      App bundle to create (default: project-root/FreeBee.app)
   --force            Replace an existing bundle at the output path
   --no-sign          Do not ad-hoc sign the finished bundle
@@ -27,6 +30,7 @@ project_dir=$(dirname -- "$script_dir")
 executable="$project_dir/freebee"
 data_dir=$(pwd)
 output="$project_dir/FreeBee.app"
+rom_dir="$project_dir/roms"
 if [ -f "$project_dir/3b1-hd.zip" ]; then
 	disk_image="$project_dir/3b1-hd.zip"
 else
@@ -61,6 +65,15 @@ while [ "$#" -gt 0 ]; do
 			disk_image=
 			shift
 			;;
+		--rom-dir)
+			[ "$#" -ge 2 ] || { echo "Missing value for --rom-dir" >&2; exit 2; }
+			rom_dir=$2
+			shift 2
+			;;
+		--no-roms)
+			rom_dir=
+			shift
+			;;
 		--force)
 			force=1
 			shift
@@ -92,6 +105,10 @@ if [ -n "$disk_image" ] && [ ! -f "$disk_image" ]; then
 	echo "Hard-disk seed not found: $disk_image" >&2
 	exit 1
 fi
+if [ -n "$rom_dir" ] && { [ ! -f "$rom_dir/14c.bin" ] || [ ! -f "$rom_dir/15c.bin" ]; }; then
+	echo "ROM directory must contain 14c.bin and 15c.bin: $rom_dir" >&2
+	exit 1
+fi
 
 executable=$(CDPATH= cd -- "$(dirname -- "$executable")" && printf '%s/%s\n' "$(pwd)" "$(basename -- "$executable")")
 data_dir=$(CDPATH= cd -- "$data_dir" && pwd)
@@ -112,17 +129,42 @@ staging=$(mktemp -d "${TMPDIR:-/tmp}/freebee-app.XXXXXX")
 trap 'rm -rf -- "$staging"' EXIT HUP INT TERM
 app="$staging/FreeBee.app"
 contents="$app/Contents"
-mkdir -p "$contents/MacOS" "$contents/Resources"
+mkdir -p "$contents/MacOS" "$contents/Resources" "$contents/Frameworks"
 
 cp "$executable" "$contents/Resources/freebee"
 chmod 755 "$contents/Resources/freebee"
 cp "$project_dir/assets/macos/freebee.icns" "$contents/Resources/freebee.icns"
 printf '%s\n' "$data_dir" > "$contents/Resources/data-directory"
+if [ -n "$rom_dir" ]; then
+	mkdir -p "$contents/Resources/roms"
+	cp "$rom_dir/14c.bin" "$contents/Resources/roms/14c.bin"
+	cp "$rom_dir/15c.bin" "$contents/Resources/roms/15c.bin"
+fi
 if [ -n "$disk_image" ]; then
 	case "$disk_image" in
 		*.zip) cp "$disk_image" "$contents/Resources/default-hd.zip" ;;
 		*) cp "$disk_image" "$contents/Resources/default-hd.img" ;;
 	esac
+fi
+
+# Bundle SDL and replace its Homebrew/MacPorts load path. System libraries and
+# frameworks remain provided by macOS.
+sdl_library=$(otool -L "$executable" | awk '/libSDL2.*dylib/ { print $1; exit }')
+if [ -n "$sdl_library" ]; then
+	[ -f "$sdl_library" ] || { echo "Linked SDL library not found: $sdl_library" >&2; exit 1; }
+	sdl_name=$(basename -- "$sdl_library")
+	cp -L "$sdl_library" "$contents/Frameworks/$sdl_name"
+	install_name_tool -id "@rpath/$sdl_name" "$contents/Frameworks/$sdl_name"
+	install_name_tool -change "$sdl_library" "@executable_path/../Frameworks/$sdl_name" "$contents/Resources/freebee"
+fi
+
+minimum_os=$(otool -l "$executable" | awk '$1 == "minos" { print $2; exit }')
+minimum_os=${minimum_os:-10.13}
+if [ -n "$sdl_library" ]; then
+	sdl_minimum_os=$(otool -l "$sdl_library" | awk '$1 == "minos" { print $2; exit }')
+	if [ -n "$sdl_minimum_os" ]; then
+		minimum_os=$(awk -v app="$minimum_os" -v sdl="$sdl_minimum_os" 'BEGIN { print (app + 0 >= sdl + 0) ? app : sdl }')
+	fi
 fi
 
 cat > "$contents/MacOS/FreeBee" <<'EOF'
@@ -156,12 +198,19 @@ fi
 if [ -f "$working_disk" ]; then
 	export FREEBEE_DEFAULT_HD="$working_disk"
 fi
+if [ -f "$contents/Resources/roms/14c.bin" ] && [ -f "$contents/Resources/roms/15c.bin" ]; then
+	export FREEBEE_ROM14C="$contents/Resources/roms/14c.bin"
+	export FREEBEE_ROM15C="$contents/Resources/roms/15c.bin"
+fi
+if [ ! -d "$data_dir" ]; then
+	data_dir="$support_dir"
+fi
 cd "$data_dir"
 exec "$contents/Resources/freebee" "$@"
 EOF
 chmod 755 "$contents/MacOS/FreeBee"
 
-cat > "$contents/Info.plist" <<'EOF'
+cat > "$contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -176,7 +225,7 @@ cat > "$contents/Info.plist" <<'EOF'
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>0.0</string>
 	<key>CFBundleVersion</key><string>1</string>
-	<key>LSMinimumSystemVersion</key><string>10.13</string>
+	<key>LSMinimumSystemVersion</key><string>$minimum_os</string>
 	<key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
@@ -195,3 +244,8 @@ echo "FreeBee data directory: $data_dir"
 if [ -n "$disk_image" ]; then
 	echo "Bundled hard-disk seed: $disk_image"
 fi
+if [ -n "$rom_dir" ]; then
+	echo "Bundled ROMs: $rom_dir/14c.bin, $rom_dir/15c.bin"
+fi
+echo "Target architectures: $(lipo -archs "$executable")"
+echo "Minimum macOS version: $minimum_os"
